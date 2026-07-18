@@ -109,3 +109,4 @@ POST http://localhost:8080/api/v1/wallet/balance
 {
 "message": "Недостаточно средств на Вашем счёте."
 }
+![Создание кошелька](docs/screenshots/postman-1-create-wallet.jpg)
