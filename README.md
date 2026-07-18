@@ -110,3 +110,11 @@ POST http://localhost:8080/api/v1/wallet/balance
 "message": "Недостаточно средств на Вашем счёте."
 }
 ![Создание кошелька](docs/screenshots/postman-1-create-wallet.jpeg)
+
+![Пополнение баланса](docs/screenshots/postman-2-deposit.jpeg)
+
+![Проверка баланса](docs/screenshots/postman-3-get-balance.jpeg)
+
+![Успешное снятие средств](docs/screenshots/postman-4-withdraw-success.jpeg)
+
+![Ошибка при недостатке средств](docs/screenshots/postman-5-withdraw-insufficient-funds.jpeg)
