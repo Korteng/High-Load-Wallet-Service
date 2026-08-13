@@ -1,7 +1,6 @@
 package ru.korteng.wallet.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
 import ru.korteng.wallet.exception.InsufficientFundsException;
 
 import java.math.BigDecimal;
@@ -34,6 +33,9 @@ public class Wallet {
     }
 
     public void withdraw(BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Сумма должна быть положительной.");
+        }
         if (balance.compareTo(amount) < 0) {
             throw new InsufficientFundsException("Недостаточно средств на Вашем счёте.");
         }
