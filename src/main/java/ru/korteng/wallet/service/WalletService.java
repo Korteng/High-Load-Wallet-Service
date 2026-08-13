@@ -1,6 +1,5 @@
 package ru.korteng.wallet.service;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.korteng.wallet.dto.WalletRequest;
@@ -17,9 +16,14 @@ import static ru.korteng.wallet.dto.WalletRequest.OperationType.DEPOSIT;
 @Service
 @Transactional
 public class WalletService {
+
     private final WalletRepository repository;
 
-    public WalletResponse createOperation (WalletRequest request) {
+    public WalletService(WalletRepository repository) {
+        this.repository = repository;
+    }
+
+    public WalletResponse createOperation(WalletRequest request) {
         Wallet wallet = repository.findByIdForUpdate(request.getId())
                 .orElseThrow(() -> new WalletNotFoundException(request.getId()));
         if (request.getOperationType() == DEPOSIT) {
@@ -31,13 +35,10 @@ public class WalletService {
         return new WalletResponse(wallet.getId(), wallet.getBalance());
     }
 
-    public Wallet getWallet (UUID id) {
+    @Transactional(readOnly = true)
+    public Wallet getWallet(UUID id) {
         return repository.findById(id)
                 .orElseThrow(() -> new WalletNotFoundException(id));
-    }
-
-    public WalletService(WalletRepository repository) {
-        this.repository = repository;
     }
 
     public Wallet createWallet(BigDecimal initialBalance) {
