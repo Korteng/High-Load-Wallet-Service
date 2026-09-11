@@ -15,6 +15,7 @@ public class WalletRequest {
     @NotNull
     private OperationType operationType;
 
+    @NotNull
     @Positive
     private BigDecimal amount;
 
@@ -45,11 +46,11 @@ public class WalletRequest {
         this.operationType = operationType;
     }
 
-    public @Positive BigDecimal getAmount() {
+    public @NotNull @Positive BigDecimal getAmount() {
         return amount;
     }
 
-    public void setAmount(@Positive BigDecimal amount) {
+    public void setAmount(@NotNull @Positive BigDecimal amount) {
         this.amount = amount;
     }
 }
