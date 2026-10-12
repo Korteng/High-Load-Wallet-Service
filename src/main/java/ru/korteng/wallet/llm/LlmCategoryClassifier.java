@@ -13,7 +13,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Keywords first (free, instant, nothing leaves the machine). The language model is asked only when the
@@ -33,8 +32,6 @@ public class LlmCategoryClassifier implements CategoryClassifier {
 
     private static final int MAX_DESCRIPTION = 100;
     private static final int CACHE_SIZE = 500;
-    private static final Pattern EMAIL = Pattern.compile("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+");
-    private static final Pattern LONG_NUMBER = Pattern.compile("\\+?\\d[\\d\\s()-]{5,}\\d");
 
     private final KeywordCategoryClassifier keywords;
     private final CategoryLlm llm;
@@ -77,12 +74,8 @@ public class LlmCategoryClassifier implements CategoryClassifier {
         }
     }
 
-    /** Masks long digit sequences (phone/card numbers) and emails, trims the length. */
     static String sanitize(String description) {
-        String text = EMAIL.matcher(description).replaceAll("[email]");
-        text = LONG_NUMBER.matcher(text).replaceAll("[номер]");
-        text = text.trim();
-        return text.length() > MAX_DESCRIPTION ? text.substring(0, MAX_DESCRIPTION) : text;
+        return LlmInputSanitizer.sanitize(description, MAX_DESCRIPTION);
     }
 
     private synchronized String cached(String key) {

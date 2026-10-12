@@ -15,6 +15,7 @@ import ru.korteng.wallet.model.Wallet;
 import ru.korteng.wallet.model.WalletOperation;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -86,5 +87,31 @@ class WalletOperationRepositoryTest {
 
         assertEquals(new BigDecimal("900.00"),
                 operations.findByIdempotencyKey("find-me").orElseThrow().getBalanceAfter().setScale(2));
+    }
+
+    @Test
+    void sumByCategory_groupsOnlyWithdrawalsOfTheWalletInThePeriod() {
+        Wallet mine = wallets.save(new Wallet(UUID.randomUUID(), new BigDecimal("5000.00")));
+        Wallet other = wallets.save(new Wallet(UUID.randomUUID(), new BigDecimal("5000.00")));
+        operations.save(WalletOperation.of(mine.getId(), WITHDRAW, new BigDecimal("300.00"),
+                new BigDecimal("4700.00"), "еда", "кофе", "s1"));
+        operations.save(WalletOperation.of(mine.getId(), WITHDRAW, new BigDecimal("200.00"),
+                new BigDecimal("4500.00"), "еда", "обед", "s2"));
+        operations.save(WalletOperation.of(mine.getId(), WITHDRAW, new BigDecimal("1000.00"),
+                new BigDecimal("3500.00"), "транспорт", "такси", "s3"));
+        operations.save(WalletOperation.of(mine.getId(), DEPOSIT, new BigDecimal("9999.00"),
+                new BigDecimal("13499.00"), "доход", "зарплата", "s4"));
+        operations.save(WalletOperation.of(other.getId(), WITHDRAW, new BigDecimal("777.00"),
+                new BigDecimal("4223.00"), "еда", "чужое", "s5"));
+        operations.flush();
+
+        var sums = operations.sumByCategory(mine.getId(), WITHDRAW, Instant.now().minusSeconds(60));
+
+        assertEquals(2, sums.size());
+        assertEquals("транспорт", sums.get(0).getCategory());
+        assertEquals(0, new BigDecimal("1000").compareTo(sums.get(0).getTotal()));
+        assertEquals("еда", sums.get(1).getCategory());
+        assertEquals(0, new BigDecimal("500").compareTo(sums.get(1).getTotal()));
+        assertEquals(0, operations.sumByCategory(mine.getId(), WITHDRAW, Instant.now().plusSeconds(60)).size());
     }
 }

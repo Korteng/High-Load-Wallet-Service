@@ -17,10 +17,12 @@ Financial-style balance updates are a classic race-condition trap: two concurren
 - **Operation history (ledger):** every balance change is stored in `wallet_operation` with type, amount, resulting balance, category, description and an optional idempotency key.
 - **Idempotent operations:** a repeated request with the same idempotency key returns the original result and does not change the balance again (unique constraint + check under the wallet lock).
 - **Telegram bot** for personal expense tracking on top of the same service (see below). Optional, disabled by default.
+- **LLM features** (optional, off by default): categorization of unrecognized expenses and a read-only assistant that answers free-text questions about the user's own spending.
 
 ## Tech Stack
 
 - **Java 17**, **Spring Boot 3.5** (Web, Validation, Data JPA)
+- **Spring AI 1.1** (OpenAI-compatible client, structured output) with the GigaChat API, optional
 - **PostgreSQL 15**, schema migrations via **Liquibase**
 - **Docker / Docker Compose** - fully containerized, config via env vars, no rebuild needed to change settings
 - **JUnit 5 + Mockito** for controller/validation tests, **Testcontainers** for repository integration tests
@@ -39,6 +41,25 @@ flowchart LR
     Service -- InsufficientFundsException<br/>WalletNotFoundException --> Handler
     Handler -->|400 / 404 JSON error| Client
     Service --> Client
+```
+
+### Bot and LLM flow (optional modules)
+
+```mermaid
+flowchart LR
+    TG([Telegram]) -->|long polling| Poller[TelegramPoller]
+    Poller --> Handler[BotCommandHandler]
+    Handler -- "question (?, сколько, покажи...)" --> Assistant[AssistantService]
+    Handler -- "expense / income text" --> Parser[ExpenseTextParser]
+    Parser --> Classifier[LlmCategoryClassifier]
+    Classifier -- "keywords first" --> Keywords[Keyword classifier]
+    Classifier -- "only for 'прочее'" --> LLM[(GigaChat)]
+    Assistant -- "1. plan" --> LLM
+    Assistant -- "2. run whitelisted query" --> Tools[WalletTools]
+    Assistant -- "3. phrase answer" --> LLM
+    Tools --> Service[WalletService / repositories]
+    Parser --> Service
+    Service --> DB[(PostgreSQL)]
 ```
 
 ## API
@@ -174,6 +195,7 @@ A personal expense tracker built on the wallet service. Long polling through the
 | `+5000 зарплата` | Income |
 | `аптека 1 200,50` | Thousands separated by a space, decimal comma |
 | `/balance`, `/history` | Balance, last 10 operations |
+| `сколько я потратил на еду за неделю?`, `покажи последние 5 операций` | Answered by the AI assistant (needs `LLM_ENABLED=true`, see below) |
 
 Each Telegram update is processed with the idempotency key `tg-<chatId>-<updateId>`, so a redelivered update cannot be applied twice. Categories are assigned by a keyword classifier behind the `CategoryClassifier` interface.
 
@@ -196,8 +218,26 @@ How it behaves:
 - **Failure-tolerant.** Timeouts, API errors or an invalid answer fall back to the keyword result; the bot keeps working without the model.
 - **Token handling.** GigaChat access tokens live 30 minutes and are obtained from the authorization key via OAuth; `GigaChatTokenProvider` refreshes the token before it expires. Neither the key nor the token is logged.
 - **Certificates.** The GigaChat endpoints use the Russian Trusted CA; the public root and sub-CA certificates are in `certs/` and imported into the JVM truststore in the Docker image.
-- **Data sent to the provider:** only the operation description, with phone/card-like digit sequences and emails masked and the text cut to 100 characters. Amounts, wallet ids and chat data are not sent. Names and addresses written inside a description are **not** detected, so the description is still personal data sent to a third party (check 152-FZ before using real user data).
+- **Data sent to the provider (categorization):** only the operation description, with phone/card-like digit sequences and emails masked and the text cut to 100 characters. Amounts, wallet ids and chat data are not sent. Names and addresses written inside a description are **not** detected, so the description is still personal data sent to a third party (check 152-FZ before using real user data).
 - Results are cached in memory (500 entries) to save tokens.
+
+## AI Assistant (optional, read-only)
+
+With `LLM_ENABLED=true` the bot also answers free-text questions about the user's own wallet: balance, spending by category and period, recent operations. A message is treated as a question if it contains `?` or starts with a question word (`сколько`, `покажи`, `на что`, ...), so `чтение 300` is still an expense.
+
+How a question is answered:
+
+1. **Plan.** The model turns the question into a plan through structured output: `balance`, `spending(days, category)`, `history(limit)` or `none`. The action is checked against a whitelist, the category against the known list, and the numbers are clamped.
+2. **Execute.** The application runs the query for the wallet linked to the chat. The wallet comes from the chat id, not from the model, so there is no way to ask for another user's data; the assistant has no write access.
+3. **Phrase.** The model formulates the answer using only the data found. If that call fails or returns nothing, a template answer is used.
+
+Failure handling: the plan is requested up to two times; if the model still returns nothing usable, a rule-based planner handles the obvious phrasings (balance, last N operations, spending for today/week/year on a category). Any other error returns a generic failure message, never a stack trace or provider response.
+
+**Why not native tool calling.** It was tried first. GigaChat's OpenAI-compatible endpoint does not return tool calls in the OpenAI format (the response comes back with an empty `content`), so Spring AI has nothing to execute. Planning through structured output, the same mechanism as categorization, works reliably there. `WalletTools` keeps the `@Tool` annotations, so moving to native tool calling or an MCP server later does not require rewriting the queries.
+
+**Data sent to the provider (assistant):** the question (emails and digit sequences masked, cut to 300 characters) and the result of the query: balance, category totals, or recent operations with descriptions cut to 100 characters. Unlike categorization, **amounts and balance do leave the service** here. Keep this in mind before running it with other people's data.
+
+**Limitations:** read-only (no "add 500 for coffee" through the assistant, expenses are entered as plain messages); one question is handled at a time because the bot uses a single polling thread, and each question costs 2-3 provider calls; answers depend on the provider's availability; the model's wording is not verified against the data, only the data itself comes from the database.
 
 ## Testing
 
@@ -207,4 +247,4 @@ mvn test
 
 Docker must be running: repository tests and the application context test run against a real PostgreSQL 15 container (Testcontainers) with the actual Liquibase changelog, so the migrations themselves are verified.
 
-Covers: validation edge cases (`WalletControllerValidationTest`), wallet service unit tests (including idempotency and history recording), message parser and bot command handler tests, repository integration tests.
+Covers: validation edge cases (`WalletControllerValidationTest`), wallet service unit tests (including idempotency and history recording), message parser and bot command handler tests, LLM classifier and assistant tests (with a fake model, no network), repository integration tests.
