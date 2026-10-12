@@ -41,7 +41,7 @@ public class LlmConfig {
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(model)
                         .temperature(0.0)
-                        .maxTokens(60)
+                        .maxTokens(400)
                         .build())
                 .build();
 

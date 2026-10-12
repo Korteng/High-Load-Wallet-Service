@@ -1,5 +1,6 @@
 package ru.korteng.wallet.telegram;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import ru.korteng.wallet.dto.WalletRequest;
@@ -46,14 +47,26 @@ public class BotCommandHandler {
     private final CategoryClassifier classifier;
     private final Set<Long> allowedChatIds;
 
+    private final Optional<Assistant> assistant;
+
     public BotCommandHandler(WalletService walletService,
                              TelegramUserService telegramUserService,
                              CategoryClassifier classifier,
-                             @Value("${telegram.allowed-chat-ids:}") String allowedChatIds) {
+                             String allowedChatIds) {
+        this(walletService, telegramUserService, classifier, allowedChatIds, Optional.empty());
+    }
+
+    @Autowired
+    public BotCommandHandler(WalletService walletService,
+                             TelegramUserService telegramUserService,
+                             CategoryClassifier classifier,
+                             @Value("${telegram.allowed-chat-ids:}") String allowedChatIds,
+                             Optional<Assistant> assistant) {
         this.walletService = walletService;
         this.telegramUserService = telegramUserService;
         this.classifier = classifier;
         this.allowedChatIds = parseAllowed(allowedChatIds);
+        this.assistant = assistant;
     }
 
     public String handle(long chatId, long updateId, String rawText) {
@@ -90,6 +103,9 @@ public class BotCommandHandler {
     }
 
     private String handleEntry(long chatId, long updateId, String text) {
+        if (assistant.isPresent() && looksLikeQuestion(text)) {
+            return withWallet(chatId, walletId -> assistant.get().ask(chatId, text));
+        }
         Optional<ExpenseTextParser.Entry> parsed = ExpenseTextParser.parse(text);
         if (parsed.isEmpty()) {
             return "Не понял. Пример: «кофе 250» или «+5000 зарплата». /help";
@@ -109,6 +125,15 @@ public class BotCommandHandler {
                 return e.getMessage();
             }
         });
+    }
+
+    private static final List<String> QUESTION_WORDS = List.of("сколько", "какой", "какая", "какие", "покажи",
+            "на что", "где", "когда", "что", "почему", "много ли", "хватит");
+
+    static boolean looksLikeQuestion(String text) {
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+        return lower.contains("?")
+                || QUESTION_WORDS.stream().anyMatch(word -> lower.equals(word) || lower.startsWith(word + " "));
     }
 
     private String historyText(UUID walletId) {
