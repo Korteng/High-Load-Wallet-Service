@@ -31,6 +31,9 @@ services:
       TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
       TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_MODEL: ${LLM_MODEL:-GigaChat-2}
+      GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
     depends_on:
       wallet-postgres:
         condition: service_healthy

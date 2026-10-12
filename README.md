@@ -179,6 +179,26 @@ Each Telegram update is processed with the idempotency key `tg-<chatId>-<updateI
 
 **Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); the polling offset is kept in memory only; the bot is a single-instance personal tool, not a multi-tenant service.
 
+## LLM Categorization (optional)
+
+Expenses the keyword classifier cannot place (it returns «прочее») can be categorized by a language model: [Spring AI](https://spring.io/projects/spring-ai) 1.1 with an OpenAI-compatible client pointed at the GigaChat API. Disabled by default.
+
+```
+LLM_ENABLED=true
+GIGACHAT_AUTH_KEY=<authorization key from the GigaChat API cabinet>
+LLM_MODEL=GigaChat-2          # optional
+```
+
+How it behaves:
+
+- **Keywords first.** The model is called only for unrecognized expenses, never for income or words the keyword list already knows, so most messages cost nothing and never leave the machine.
+- **Structured output.** The model must answer `{"category": "..."}`; the answer is accepted only if it is one of the known categories (`еда`, `транспорт`, `жильё`, `здоровье`, `развлечения`, `прочее`). A wrong, malformed or injected answer cannot create a new category.
+- **Failure-tolerant.** Timeouts, API errors or an invalid answer fall back to the keyword result; the bot keeps working without the model.
+- **Token handling.** GigaChat access tokens live 30 minutes and are obtained from the authorization key via OAuth; `GigaChatTokenProvider` refreshes the token before it expires. Neither the key nor the token is logged.
+- **Certificates.** The GigaChat endpoints use the Russian Trusted CA; the public root and sub-CA certificates are in `certs/` and imported into the JVM truststore in the Docker image.
+- **Data sent to the provider:** only the operation description, with phone/card-like digit sequences and emails masked and the text cut to 100 characters. Amounts, wallet ids and chat data are not sent. Names and addresses written inside a description are **not** detected, so the description is still personal data sent to a third party (check 152-FZ before using real user data).
+- Results are cached in memory (500 entries) to save tokens.
+
 ## Testing
 
 ```bash
