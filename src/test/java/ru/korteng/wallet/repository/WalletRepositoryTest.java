@@ -4,19 +4,36 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 import ru.korteng.wallet.model.Wallet;
 
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ActiveProfiles("test")
-public class WalletRepositoryTest {
+@Testcontainers
+class WalletRepositoryTest {
+
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+        registry.add("spring.liquibase.enabled", () -> "true");
+    }
 
     @Autowired
     private WalletRepository walletRepository;
@@ -24,9 +41,8 @@ public class WalletRepositoryTest {
     @Test
     void findById_shouldReturnWallet() {
         UUID walletId = UUID.randomUUID();
-        Wallet wallet = new Wallet(walletId, new BigDecimal("1000.00"));
+        walletRepository.save(new Wallet(walletId, new BigDecimal("1000.00")));
 
-        walletRepository.save(wallet);
         Optional<Wallet> found = walletRepository.findById(walletId);
 
         assertTrue(found.isPresent());
