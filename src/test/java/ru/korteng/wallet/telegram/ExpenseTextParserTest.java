@@ -68,4 +68,13 @@ class ExpenseTextParserTest {
         assertEquals(Optional.empty(), ExpenseTextParser.parse("   "));
         assertEquals(Optional.empty(), ExpenseTextParser.parse(null));
     }
+
+    @Test
+    void spaceAsThousandsSeparator_isHandled() {
+        var entry = ExpenseTextParser.parse("аптека 1 200,50").orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals(new java.math.BigDecimal("1200.50"), entry.amount());
+        org.junit.jupiter.api.Assertions.assertEquals("аптека", entry.description());
+        org.junit.jupiter.api.Assertions.assertEquals(new java.math.BigDecimal("15000"),
+                ExpenseTextParser.parse("+15 000 зарплата").orElseThrow().amount());
+    }
 }

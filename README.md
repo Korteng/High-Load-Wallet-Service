@@ -11,6 +11,13 @@ A REST service for managing wallet balances (`DEPOSIT` / `WITHDRAW`) built to st
 
 Financial-style balance updates are a classic race-condition trap: two concurrent requests read the same balance, both compute their own new value, and one write silently overwrites the other. This service prevents that with row-level pessimistic locking (`SELECT ... FOR UPDATE`) on every balance mutation, verified under actual concurrent load rather than assumed correct.
 
+## Features
+
+- Create wallets, deposit and withdraw with pessimistic row locking (no lost updates).
+- **Operation history (ledger):** every balance change is stored in `wallet_operation` with type, amount, resulting balance, category, description and an optional idempotency key.
+- **Idempotent operations:** a repeated request with the same idempotency key returns the original result and does not change the balance again (unique constraint + check under the wallet lock).
+- **Telegram bot** for personal expense tracking on top of the same service (see below). Optional, disabled by default.
+
 ## Tech Stack
 
 - **Java 17**, **Spring Boot 3.5** (Web, Validation, Data JPA)
@@ -65,6 +72,12 @@ GET /api/v1/wallet/wallets/0bbe090c-6b9c-4eab-86ac-d42f205fbfbb
 { "id": "0bbe090c-6b9c-4eab-86ac-d42f205fbfbb", "newBalance": 11000.00 }
 ```
 
+**Operation history**
+```
+GET /api/v1/wallet/wallets/0bbe090c-6b9c-4eab-86ac-d42f205fbfbb/operations?limit=20
+```
+Newest first, `limit` is clamped to 1..100.
+
 **Insufficient funds**
 ```
 POST /api/v1/wallet/balance
@@ -117,6 +130,8 @@ Tested with `hey` against `POST /api/v1/wallet/balance`, which locks the target 
 
 Removing artificial single-row contention more than 3x'd throughput - confirming the lock serializes writes only to the same wallet, not the service as a whole. That's the correct behavior for a financial ledger.
 
+> **Note:** both measurements were taken before the operation history was added. Every balance change now performs one extra `INSERT` into `wallet_operation` inside the same transaction, so current numbers will be somewhat lower; the benchmark has not been re-run yet.
+
 Reproduce with:
 ```bash
 ./throughput_test.sh   # scenario 1
@@ -135,13 +150,34 @@ In short: the 1000 RPS target in the spec describes a server environment with a 
 ## Running Locally
 
 ```bash
-mvn clean package -DskipTests
 docker compose up --build -d
 ```
+
+The image is built inside Docker (multi-stage, Maven in the build stage), so only Docker is required.
 
 App: `http://localhost:8080` · DB: `localhost:5432` (`wallet_db` / `wallet_user`)
 
 Config is fully env-driven (see `docker-compose.yml`) - no rebuild needed to change datasource, credentials, or Liquibase behavior.
+
+## Telegram Bot (optional)
+
+A personal expense tracker built on the wallet service. Long polling through the Telegram Bot API with Spring `RestClient`, no third-party Telegram library.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. `cp .env.example .env` and set `TELEGRAM_ENABLED=true`, `TELEGRAM_TOKEN`, `TELEGRAM_ALLOWED_CHAT_IDS` (comma-separated chat ids; **leave it empty only if you want anyone to be able to use the bot**). `.env` is git-ignored.
+3. `docker compose up --build -d`
+
+| Message | Result |
+|---|---|
+| `/start` | Links the chat to a new wallet |
+| `кофе 250`, `250 такси`, `бар 700 руб` | Expense, category assigned by keywords |
+| `+5000 зарплата` | Income |
+| `аптека 1 200,50` | Thousands separated by a space, decimal comma |
+| `/balance`, `/history` | Balance, last 10 operations |
+
+Each Telegram update is processed with the idempotency key `tg-<chatId>-<updateId>`, so a redelivered update cannot be applied twice. Categories are assigned by a keyword classifier behind the `CategoryClassifier` interface.
+
+**Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); the polling offset is kept in memory only; the bot is a single-instance personal tool, not a multi-tenant service.
 
 ## Testing
 
@@ -149,4 +185,6 @@ Config is fully env-driven (see `docker-compose.yml`) - no rebuild needed to cha
 mvn test
 ```
 
-Covers: validation edge cases (`WalletControllerValidationTest`), service-layer unit tests, and repository integration tests via Testcontainers.
+Docker must be running: repository tests and the application context test run against a real PostgreSQL 15 container (Testcontainers) with the actual Liquibase changelog, so the migrations themselves are verified.
+
+Covers: validation edge cases (`WalletControllerValidationTest`), wallet service unit tests (including idempotency and history recording), message parser and bot command handler tests, repository integration tests.

@@ -14,7 +14,8 @@ public final class ExpenseTextParser {
     public record Entry(boolean income, BigDecimal amount, String description) {
     }
 
-    private static final String NUMBER = "(\\d+(?:[.,]\\d{1,2})?)";
+    private static final String NUMBER =
+            "(\\d{1,3}(?:[ \u00A0]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?)";
     private static final Pattern LEADING = Pattern.compile("^([+-]?)\\s*" + NUMBER + "\\s*(.*)$");
     private static final Pattern TRAILING = Pattern.compile("^(.*?)\\s+([+-]?)" + NUMBER + "$");
     private static final Pattern CURRENCY_SUFFIX =
@@ -52,7 +53,7 @@ public final class ExpenseTextParser {
     }
 
     private static Optional<Entry> build(boolean income, String number, String description) {
-        BigDecimal amount = new BigDecimal(number.replace(',', '.'));
+        BigDecimal amount = new BigDecimal(number.replaceAll("[ \u00A0]", "").replace(',', '.'));
         if (amount.signum() <= 0) {
             return Optional.empty();
         }

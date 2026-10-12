@@ -1,9 +1,11 @@
-FROM eclipse-temurin:17-jdk
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY pom.xml .
+COPY src ./src
+RUN mvn -B -q -DskipTests package
 
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-
-COPY target/wallet-*.jar app.jar
-
+COPY --from=build /build/target/wallet-*.jar app.jar
 EXPOSE 8080
-
 ENTRYPOINT ["java", "-jar", "app.jar"]
