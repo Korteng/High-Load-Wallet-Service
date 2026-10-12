@@ -1,0 +1,61 @@
+databaseChangeLog:
+  - changeSet:
+      id: 2
+      author: korteng
+      changes:
+        - createTable:
+            tableName: wallet_operation
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: wallet_id
+                  type: UUID
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_wallet_operation_wallet
+                    references: wallet(id)
+              - column:
+                  name: operation_type
+                  type: VARCHAR(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: amount
+                  type: DECIMAL(19, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: balance_after
+                  type: DECIMAL(19, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: category
+                  type: VARCHAR(64)
+              - column:
+                  name: description
+                  type: VARCHAR(255)
+              - column:
+                  name: idempotency_key
+                  type: VARCHAR(64)
+                  constraints:
+                    unique: true
+                    uniqueConstraintName: uq_wallet_operation_idempotency_key
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  defaultValueComputed: CURRENT_TIMESTAMP
+                  constraints:
+                    nullable: false
+        - createIndex:
+            tableName: wallet_operation
+            indexName: idx_wallet_operation_wallet_created
+            columns:
+              - column:
+                  name: wallet_id
+              - column:
+                  name: created_at

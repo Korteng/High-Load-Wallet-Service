@@ -1,0 +1,26 @@
+databaseChangeLog:
+  - changeSet:
+      id: 3
+      author: korteng
+      changes:
+        - createTable:
+            tableName: telegram_user
+            columns:
+              - column:
+                  name: chat_id
+                  type: BIGINT
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: wallet_id
+                  type: UUID
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_telegram_user_wallet
+                    references: wallet(id)
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  defaultValueComputed: CURRENT_TIMESTAMP
+                  constraints:
+                    nullable: false

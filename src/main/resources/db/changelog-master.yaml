@@ -2,3 +2,9 @@ databaseChangeLog:
   - include:
       file: create-wallet-table.yaml
       relativeToChangelogFile: true
+  - include:
+      file: create-wallet-operation-table.yaml
+      relativeToChangelogFile: true
+  - include:
+      file: create-telegram-user-table.yaml
+      relativeToChangelogFile: true
