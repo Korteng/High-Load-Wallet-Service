@@ -122,6 +122,11 @@ POST /api/v1/wallet/balance
 | Validation failure (`@NotNull`, `@Positive`) | 400 | `{"message": "<field>: <reason>"}` |
 | Insufficient funds on withdrawal | 400 | `{"message": "Недостаточно средств на Вашем счёте."}` |
 | Wallet not found | 404 | `{"message": "Кошелёк с ID <id> не найден"}` |
+| Invalid path/query value (`/wallets/abc`, `?limit=x`) | 400 | `{"message": "Неверное значение параметра <name>"}` |
+| Missing required parameter | 400 | `{"message": "Отсутствует параметр <name>"}` |
+| Unknown path | 404 | `{"message": "Ресурс не найден"}` |
+| Wrong HTTP method | 405 | `{"message": "Метод не поддерживается"}` |
+| Unsupported content type | 415 | `{"message": "Неподдерживаемый тип содержимого"}` |
 | Unexpected error | 500 | `{"message": "Внутренняя ошибка сервера"}` |
 
 No request produces an unhandled 5xx - every failure mode above is explicitly caught in `GlobalExceptionHandler` and covered by `WalletControllerValidationTest`.
@@ -192,7 +197,7 @@ Meant for a handful of known users on a machine you control (a laptop or a mini 
 - **Restart policy.** Both containers use `restart: unless-stopped`, so they come back after a reboot once Docker starts (enable Docker autostart on login and disable sleep while on power).
 - **Access control.** Put the chat ids of the users into `TELEGRAM_ALLOWED_CHAT_IDS`; with an empty list anyone who finds the bot can use it. Secrets live in `.env` (git-ignored).
 - **Database password.** Set `DB_PASSWORD` in `.env` before the first start on a new machine. The default in the compose file is for local development only; an existing volume keeps the password it was created with.
-- **Backups.** `scripts/backup.sh` writes a gzipped `pg_dump` to `backups/` (git-ignored) and keeps the 14 newest. Schedule it daily; restore with:
+- **Backups.** `scripts/backup.sh` writes a gzipped `pg_dump` to `backups/` (git-ignored) and keeps the 14 newest. It is run manually; no schedule is configured (cron or Windows Task Scheduler can run it daily). Restore with:
 
 ```bash
 gunzip -c backups/wallet_<timestamp>.sql.gz | docker compose exec -T wallet-postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
@@ -200,7 +205,7 @@ gunzip -c backups/wallet_<timestamp>.sql.gz | docker compose exec -T wallet-post
 
 - **LLM and other people's data.** With `LLM_ENABLED=true`, descriptions of operations (and, for assistant questions, balances and totals) go to the GigaChat provider. Tell users before turning it on, and check the terms of your GigaChat access for use by other people.
 
-Not covered: monitoring and alerting, high availability, TLS (nothing is exposed), automatic updates.
+Not covered: scheduled backups, monitoring and alerting, high availability, TLS (nothing is exposed), automatic updates.
 
 ## Telegram Bot (optional)
 
@@ -221,7 +226,7 @@ A personal expense tracker built on the wallet service. Long polling through the
 
 Each Telegram update is processed with the idempotency key `tg-<chatId>-<updateId>`, so a redelivered update cannot be applied twice. Categories are assigned by a keyword classifier behind the `CategoryClassifier` interface.
 
-**Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); updates are acknowledged to Telegram when they are dispatched to a worker, not after they are handled, so a message that is being processed during a crash is lost (a redelivered one cannot be applied twice, thanks to the idempotency key); the bot is a single-instance personal tool, not a multi-tenant service.
+**Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); an update is acknowledged to Telegram only after it has been handled, so after a crash the unfinished ones are redelivered; balances are protected by the idempotency key, but the user may get a duplicate reply; the bot is a single-instance personal tool, not a multi-tenant service.
 
 ## LLM Categorization (optional)
 

@@ -19,6 +19,7 @@ public class TelegramPoller {
     private final BotCommandHandler handler;
     private final int pollTimeoutSeconds;
     private final PerChatExecutor executor;
+    private final OffsetTracker offsets = new OffsetTracker();
 
     private volatile boolean running;
     private Thread thread;
@@ -52,13 +53,19 @@ public class TelegramPoller {
     }
 
     private void loop() {
-        long offset = 0;
         while (running) {
             try {
-                JsonNode updates = api.getUpdates(offset, pollTimeoutSeconds);
+                JsonNode updates = api.getUpdates(offsets.nextOffset(), pollTimeoutSeconds);
+                int fresh = 0;
                 for (JsonNode update : updates) {
-                    offset = Math.max(offset, update.path("update_id").asLong() + 1);
-                    dispatch(update);
+                    if (dispatch(update)) {
+                        fresh++;
+                    }
+                }
+                // while an update is still being handled, Telegram redelivers it (and the ones after it) at
+                // once; without a pause that would be a busy loop
+                if (updates.size() > 0 && fresh == 0) {
+                    sleep(300);
                 }
             } catch (Exception e) {
                 if (!running) {
@@ -70,14 +77,30 @@ public class TelegramPoller {
         }
     }
 
-    /** The polling thread only fetches updates; handling (and slow LLM calls) happens on the workers, per chat. */
-    private void dispatch(JsonNode update) {
+    /**
+     * The polling thread only fetches updates; handling (and slow LLM calls) happens on the workers, per chat.
+     * An update is acknowledged to Telegram only after it has been handled (see {@link OffsetTracker}).
+     *
+     * @return false for a redelivered update that was already dispatched
+     */
+    private boolean dispatch(JsonNode update) {
+        long updateId = update.path("update_id").asLong();
         JsonNode message = update.path("message");
-        if (message.isMissingNode() || !message.hasNonNull("text")) {
-            return;
+        boolean handled = !message.isMissingNode() && message.hasNonNull("text");
+        if (!offsets.register(updateId, handled)) {
+            return false;
         }
-        long chatId = message.path("chat").path("id").asLong();
-        executor.submit(chatId, () -> process(update));
+        if (handled) {
+            long chatId = message.path("chat").path("id").asLong();
+            executor.submit(chatId, () -> {
+                try {
+                    process(update);
+                } finally {
+                    offsets.done(updateId);
+                }
+            });
+        }
+        return true;
     }
 
     private void process(JsonNode update) {
