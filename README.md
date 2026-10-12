@@ -128,45 +128,49 @@ No request produces an unhandled 5xx - every failure mode above is explicitly ca
 
 ## Concurrency & Load Testing
 
-The original spec called for correctness at 1000 RPS on a single wallet. This section documents an attempt to reproduce that load locally, what was actually measured, and why the two numbers below - not 1000 - are the honest result on this hardware.
+The original spec called for correctness at 1000 RPS on a single wallet. This section documents what was actually measured on a laptop, how to reproduce it, and why the honest result is a range, not 1000.
 
-Tested with `hey` against `POST /api/v1/wallet/balance`, which locks the target row (`PESSIMISTIC_WRITE`) for the duration of the update.
+**What is verified in every run:** every request returns `200`, and the final balance equals the number of successful deposits - no lost updates, no failed requests. The scripts check this themselves and exit with an error otherwise.
 
-**Scenario 1 - single wallet, high contention** (50 concurrent clients, 2000 requests on one wallet)
-
-| Metric | Value |
-|---|---|
-| Throughput | 148.77 req/s |
-| p50 / p99 latency | 291 ms / 1.26 s |
-| Failed requests | 0 |
-| Final balance | exact match - no lost updates |
-
-**Scenario 2 - 40 wallets, distributed load** (warmed JVM, 15s duration per wallet, 15 concurrent clients each)
-
-| Metric | Value |
-|---|---|
-| Aggregate throughput | 536 req/s |
-| Failed requests | 0 |
-| Final balances | exact match on all 40 wallets |
-
-Removing artificial single-row contention more than 3x'd throughput - confirming the lock serializes writes only to the same wallet, not the service as a whole. That's the correct behavior for a financial ledger.
-
-> **Note:** both measurements were taken before the operation history was added. Every balance change now performs one extra `INSERT` into `wallet_operation` inside the same transaction, so current numbers will be somewhat lower; the benchmark has not been re-run yet.
-
-Reproduce with:
+**Reproduce** (needs Docker, [`hey`](https://github.com/rakyll/hey) and `jq`; use `127.0.0.1`, not `localhost`, because the ports are bound to IPv4 loopback):
 ```bash
-./throughput_test.sh   # scenario 1
-./scale_test.sh        # scenario 2
+bash scripts/bench.sh up     # separate stack "wallet-bench": own DB volume, port 18080, no bot, no LLM
+bash scripts/bench.sh run    # 10 s warm-up (discarded), scenario 1, scenario 2
+bash scripts/bench.sh down   # remove the stack and its volume
 ```
+The stack is separate from the working one, so load tests never touch real data. Individual scenarios: `single_wallet_test.sh`, `scale_test.sh`.
 
-### Why not 1000 RPS, and what would change it
+**Scenario 1 - one wallet, maximum contention** (2000 deposits, 50 concurrent clients; `POST /api/v1/wallet/balance` locks the wallet row with `PESSIMISTIC_WRITE`)
 
-Both numbers were measured on a 4-core dev laptop (`nproc` -> 4) running Docker Desktop on WSL2, not dedicated server hardware:
+| Metric | Value (5 runs) |
+|---|---|
+| Throughput | 142-272 req/s (median 173) |
+| p50 / p99 latency | 0.16-0.32 s / 0.40-0.97 s |
+| Failed requests | 0 |
+| Final balance | exact in every run |
 
-- **Single-wallet throughput (~150 req/s) is latency-bound, not CPU-bound.** It's capped by `1 / (lock hold time + commit round-trip)` - network hop through the WSL2 virtual network, ORM overhead, and Postgres's `fsync` on commit. More CPU cores would not move this number; only a shorter network/disk path would (bare-metal Linux, local Postgres, tuned connection pool).
-- **Aggregate throughput (~536 req/s) is CPU-bound.** It scaled from ~380 to ~590 req/s purely by right-sizing the Hikari connection pool and Postgres `max_connections` to the available 4 cores - oversizing the pool past the core count made it *worse* (more thread contention, not more parallelism), confirming this is a resource ceiling, not a code inefficiency. Aggregate throughput is expected to scale close to linearly with additional cores on real server hardware.
+**Scenario 2 - 40 wallets** (15 concurrent clients per wallet, 15 s per run)
 
-In short: the 1000 RPS target in the spec describes a server environment with a shorter network/disk path than a laptop VM can offer, not a correctness bar the code fails to meet. Every request stayed correct and every failure mode returned the right status code - what changes on better hardware is throughput, not correctness.
+| Metric | Value (4 runs) |
+|---|---|
+| Aggregate throughput | 231-575 req/s (median 470) |
+| Failed requests | 0 |
+| Final balances | exact on all 40 wallets in every run |
+
+Spreading the load over many wallets is faster than hammering one (about 1.6-3.3x per run), as expected: the lock serializes writes only to the same wallet, not the whole service.
+
+**How much to trust the numbers.** They are noisy. Runs were taken one after another on the same stack; throughput varied by up to ~2x between runs, and scenario 2 rose from run to run (231, 448, 493, 575), which suggests that JVM and database warm-up is longer than the 10-second warm-up used. Treat the ranges, not single values, as the result. The measurements before the operation history was added (about 149 req/s and 536 req/s) fall inside the ranges above, so the extra `INSERT` per operation did not produce a regression larger than the noise.
+
+**Environment:** a laptop with an AMD Ryzen 3 3200U (2 cores, 4 threads) and about 6 GB of usable RAM, Docker Desktop on WSL2 (the WSL VM is limited to ~2.8 GB), a VPN client and other desktop software running in the background. Memory use was about 96-98% during the runs. It is not an isolated benchmark machine, and the load generator runs on the same machine as the service.
+
+### Why not 1000 RPS
+
+Two likely reasons, neither profiled (the service was not instrumented, so these are hypotheses):
+
+- **Single-wallet throughput is probably latency-bound, not CPU-bound.** Every deposit holds the row lock for the whole transaction (read, update, ledger insert, commit with `fsync`), so throughput on one wallet is capped by roughly `1 / transaction time`. More cores would not help; a shorter network/disk path would.
+- **Aggregate throughput is probably limited by the machine** (2 cores / 4 threads shared with the database, the load generator and Windows, under memory pressure). Earlier tuning showed the connection pool should be sized to the core count rather than larger, but that was not re-verified here.
+
+The 1000 RPS target describes a server with a shorter network and disk path than a laptop VM provides. Correctness did not depend on the hardware in any run; throughput did.
 
 ## Running Locally
 
@@ -179,6 +183,24 @@ The image is built inside Docker (multi-stage, Maven in the build stage), so onl
 App: `http://localhost:8080` · DB: `localhost:5432` (`wallet_db` / `wallet_user`)
 
 Config is fully env-driven (see `docker-compose.yml`) - no rebuild needed to change datasource, credentials, or Liquibase behavior.
+
+## Self-hosting on a home machine
+
+Meant for a handful of known users on a machine you control (a laptop or a mini PC), not for public hosting.
+
+- **Outbound only.** The bot uses long polling, so no public IP or port forwarding is needed. Postgres is not published to the host at all (the app reaches it over the Docker network; use `docker compose exec wallet-postgres psql ...` for manual queries), and the API port `8080` is bound to `127.0.0.1`, so neither is reachable from the local network.
+- **Restart policy.** Both containers use `restart: unless-stopped`, so they come back after a reboot once Docker starts (enable Docker autostart on login and disable sleep while on power).
+- **Access control.** Put the chat ids of the users into `TELEGRAM_ALLOWED_CHAT_IDS`; with an empty list anyone who finds the bot can use it. Secrets live in `.env` (git-ignored).
+- **Database password.** Set `DB_PASSWORD` in `.env` before the first start on a new machine. The default in the compose file is for local development only; an existing volume keeps the password it was created with.
+- **Backups.** `scripts/backup.sh` writes a gzipped `pg_dump` to `backups/` (git-ignored) and keeps the 14 newest. Schedule it daily; restore with:
+
+```bash
+gunzip -c backups/wallet_<timestamp>.sql.gz | docker compose exec -T wallet-postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+```
+
+- **LLM and other people's data.** With `LLM_ENABLED=true`, descriptions of operations (and, for assistant questions, balances and totals) go to the GigaChat provider. Tell users before turning it on, and check the terms of your GigaChat access for use by other people.
+
+Not covered: monitoring and alerting, high availability, TLS (nothing is exposed), automatic updates.
 
 ## Telegram Bot (optional)
 
@@ -199,7 +221,7 @@ A personal expense tracker built on the wallet service. Long polling through the
 
 Each Telegram update is processed with the idempotency key `tg-<chatId>-<updateId>`, so a redelivered update cannot be applied twice. Categories are assigned by a keyword classifier behind the `CategoryClassifier` interface.
 
-**Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); the polling offset is kept in memory only; the bot is a single-instance personal tool, not a multi-tenant service.
+**Limitations:** `кофе 5 250` is read as 5250 (a space between digit groups is treated as a thousands separator); updates are acknowledged to Telegram when they are dispatched to a worker, not after they are handled, so a message that is being processed during a crash is lost (a redelivered one cannot be applied twice, thanks to the idempotency key); the bot is a single-instance personal tool, not a multi-tenant service.
 
 ## LLM Categorization (optional)
 

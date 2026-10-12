@@ -1,0 +1,11 @@
+# Throwaway stack for load tests: own containers, own volume, own port, no bot and no LLM.
+# Used by scripts/bench.sh; never touches the working stack or its database.
+services:
+  wallet-postgres:
+    container_name: wallet-bench-postgres
+    restart: "no"
+  wallet-app:
+    container_name: wallet-bench-app
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:18080:8080"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="http://localhost:8080/api/v1/wallet"
+BASE_URL="http://127.0.0.1:8080/api/v1/wallet"
 WALLET_COUNT=10
 REQUESTS_PER_WALLET=200
 CONCURRENCY_PER_WALLET=5
