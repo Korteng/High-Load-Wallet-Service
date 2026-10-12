@@ -18,16 +18,19 @@ public class TelegramPoller {
     private final TelegramApiClient api;
     private final BotCommandHandler handler;
     private final int pollTimeoutSeconds;
+    private final PerChatExecutor executor;
 
     private volatile boolean running;
     private Thread thread;
 
     public TelegramPoller(TelegramApiClient api,
                           BotCommandHandler handler,
-                          @Value("${telegram.poll-timeout-seconds:25}") int pollTimeoutSeconds) {
+                          @Value("${telegram.poll-timeout-seconds:25}") int pollTimeoutSeconds,
+                          @Value("${telegram.worker-threads:8}") int workerThreads) {
         this.api = api;
         this.handler = handler;
         this.pollTimeoutSeconds = pollTimeoutSeconds;
+        this.executor = new PerChatExecutor(Math.max(1, workerThreads));
     }
 
     @PostConstruct
@@ -45,6 +48,7 @@ public class TelegramPoller {
         if (thread != null) {
             thread.interrupt();
         }
+        executor.shutdown();
     }
 
     private void loop() {
@@ -54,7 +58,7 @@ public class TelegramPoller {
                 JsonNode updates = api.getUpdates(offset, pollTimeoutSeconds);
                 for (JsonNode update : updates) {
                     offset = Math.max(offset, update.path("update_id").asLong() + 1);
-                    process(update);
+                    dispatch(update);
                 }
             } catch (Exception e) {
                 if (!running) {
@@ -66,11 +70,18 @@ public class TelegramPoller {
         }
     }
 
-    private void process(JsonNode update) {
+    /** The polling thread only fetches updates; handling (and slow LLM calls) happens on the workers, per chat. */
+    private void dispatch(JsonNode update) {
         JsonNode message = update.path("message");
         if (message.isMissingNode() || !message.hasNonNull("text")) {
             return;
         }
+        long chatId = message.path("chat").path("id").asLong();
+        executor.submit(chatId, () -> process(update));
+    }
+
+    private void process(JsonNode update) {
+        JsonNode message = update.path("message");
         long chatId = message.path("chat").path("id").asLong();
         long updateId = update.path("update_id").asLong();
         try {
